@@ -1,0 +1,311 @@
+{% extends "base.html" %} 
+{% block title %}{{prop}} on Worldmap | {{ block.super }}{% endblock title %}
+{% block page_content %} {% load static %} {% load mytags %}
+<!-- Page Heading -->
+<div class="d-sm-flex align-items-center justify-content-between mb-4">
+    <h1 class="h3 mb-0 text-gray-800">{{prop}} on WORLDMAP</h1>
+    {% if False%}
+    <a href={% add_query_params_full request prop="GDP" %} class="d-none d-sm-inline-block btn btn-sm btn-primary shadow-sm" target="_blank">
+        <i class="fas fa-download fa-sm text-white-50"></i> Full Screen</a>
+    {% endif %}
+</div>
+<!-- End of Page Heading -->
+<div class="row">
+    <!-- Map -->
+    <div id="map"></div>
+    <script src="{%static 'maps/js/jquery.funcResizeBox.js'%}"></script>
+    <script>
+        var $j = jQuery.noConflict(true);
+        var prop_default = "{{prop}}";
+        var year_default = "2019";
+        var choropleth_geojson;
+        var circle_geojson;
+        var basemap = L.layerGroup();
+        var circle = L.layerGroup();
+        var choropleth = L.layerGroup();
+        var circle_geojson_URL = "{% static 'maps/data/' %}" + "{{prop}}-Circle.geojson";
+        var choropleth_geojson_URL = "{% static 'maps/data/' %}" + "{{prop}}-Choropleth.geojson";
+        var set_color
+        set_color = ['#FFEDA0', '#FED976', '#FEB24C', '#FD8D3C', '#FC4E2A', '#E31A1C', '#BD0026', '#800026'];
+
+        {% if prop == "GDP" %}
+        var rad_prep = 1;
+        var unit = "Billions of U.S. dollars"
+        var grades_array = [0, 100, 200, 500, 1000, 2000, 5000, 10000];
+        {% elif prop == "Population" %}
+        var rad_prep = Math.sqrt(10);
+        var unit = "Millions of people"
+        var grades_array = [0, 10, 20, 50, 100, 200, 500, 1000];
+        {% endif %}
+
+        init_map();
+        init_circle();
+        init_choropleth();
+        //$j('#map').funcResizeBox({ });
+        function set_map_color(color = "red") {
+            // set_color <-- pale -- middle -- dark -->
+            switch (color) {
+                case "red":
+                    set_color = ['#FFEDA0', '#FED976', '#FEB24C', '#FD8D3C', '#FC4E2A', '#E31A1C', '#BD0026', '#800026'];
+                    break;
+                case "green":
+                    set_color = ['#f7fcfd', '#e5f5f9', '#ccece6', '#99d8c9', '#66c2a4', '#41ae76', '#238b45', '#005824'];
+                    break;
+                case "blue":
+                    set_color = ['#fff7fb', '#ece7f2', '#d0d1e6', '#a6bddb', '#74a9cf', '#3690c0', '#0570b0', '#034e7b'];
+                    break;
+                case "gray":
+                    set_color = ['#ffffff', '#f0f0f0', '#d9d9d9', '#bdbdbd', '#969696', '#737373', '#525252', '#252525'];
+                    break;
+            }
+            var year = $j("#slider").slider("value");
+            set_choropleth_geojson(prop = "{{prop}}", year = year);
+            set_circle_geojson(prop = "{{prop}}", year = year);
+            set_legend();
+        }
+
+        $j('#red').click(function () {
+            set_map_color("red");
+            return false;
+        });
+        $j('#green').click(function () {
+            set_map_color("green");
+            return false;
+        });
+        $j('#blue').click(function () {
+            set_map_color("blue");
+            return false;
+        });
+        $j('#gray').click(function () {
+            set_map_color("gray");
+            return false;
+        });
+
+        var map = L.map('map', {
+            center: [25, 0],
+            zoom: 2,
+            layers: [choropleth]
+        });
+
+        var basemaps = {
+            "BASEMAP": basemap,
+            "CHOROPLETH": choropleth,
+        }
+        var overlays = {
+            "CIRCLE": circle,
+        };
+
+        L.control.layers(basemaps, overlays, {
+            position: 'topleft'
+        }).addTo(map);
+
+        function init_map() {
+            var base = L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}', {
+                attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
+                maxZoom: 13,
+                id: 'mapbox.light',
+                accessToken: 'pk.eyJ1IjoieWFzdXl1a2ktaG9uam8iLCJhIjoiY2p3OXM0cGJkMDJmZjQxcW5ocnNmdzVxZiJ9.n870ku0ckjJfrIqHhzbKRA'
+            });
+            base.addTo(basemap);
+            base.addTo(choropleth);
+        }
+
+        function init_circle() {
+            $j.getJSON(circle_geojson_URL, function (data) {
+                circle_geojson = L.geoJson(data, {
+                    style: style,
+                    pointToLayer: pointToLayer,
+                    onEachFeature: onEachFeature,
+                });
+                circle_geojson.addTo(circle);
+                //map.addLayer(geojson);
+            });
+        }
+
+        function init_choropleth() {
+            $j.getJSON(choropleth_geojson_URL, function (data) {
+                choropleth_geojson = L.geoJson(data, {
+                    style: style,
+                    onEachFeature: onEachFeature
+                });
+                choropleth_geojson.addTo(choropleth);
+            })
+        }
+
+        function set_choropleth_geojson(prop, year) {
+            choropleth_geojson.setStyle(function (feature) {
+                return style(feature, prop, year)
+            })
+        }
+
+        function pointToLayer(feature, latlng, prop = prop_default, year = year_default) {
+            var radius = feature.properties[`${prop}${year}`] && feature.properties[`${prop}${year}`] !== "no data" ? feature.properties[`${prop}${year}`] : 0;
+            return new L.CircleMarker(latlng, {
+                radius: Math.sqrt(Number(radius) / Math.PI) * rad_prep,
+                fillOpacity: 0.5
+            });
+        }
+
+        function set_circle_geojson(prop, year) {
+            $j.getJSON(circle_geojson_URL, function (data) {
+                circle.clearLayers();
+                circle_geojson = L.geoJson(data, {
+                    style: function (feature) {
+                        return style(feature, prop = prop, year = year)
+                    },
+                    pointToLayer: function (feature, latlng) {
+                        return pointToLayer(feature, latlng, prop = prop, year = year)
+                    },
+                    onEachFeature: onEachFeature
+                });
+                circle_geojson.addTo(circle);
+            })
+        }
+
+        // get color depending on population density value
+        function getColor(d) {
+            return d > grades_array[7] ? set_color[7] :
+                d > grades_array[6] ? set_color[6] :
+                    d > grades_array[5] ? set_color[5] :
+                        d > grades_array[4] ? set_color[4] :
+                            d > grades_array[3] ? set_color[3] :
+                                d > grades_array[2] ? set_color[2] :
+                                    d > grades_array[1] ? set_color[1] :
+                                        set_color[0];
+        }
+
+        function style(feature, prop = prop_default, year = year_default) {
+            return {
+                weight: 2,
+                opacity: 1,
+                color: 'white',
+                dashArray: '3',
+                fillOpacity: 0.7,
+                fillColor: getColor(feature.properties[`${prop}${year}`])
+            };
+        }
+
+        function highlightFeature(e) {
+            var layer = e.target;
+
+            layer.setStyle({
+                weight: 5,
+                color: '#666',
+                dashArray: '',
+                fillOpacity: 0.5
+            });
+            var year = $j("#slider").slider("value");
+            info.update(layer.feature.properties, prop = "{{prop}}", year = year);
+            
+            if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+                layer.bringToFront();
+            }
+        }
+
+        function resetHighlight(e) {
+            var layer = e.target;
+            var year = $j("#slider").slider("value");
+            //info.update(null, prop = "{{prop}}", year = year);
+            layer.setStyle({
+                weight: 2,
+                opacity: 1,
+                color: 'white',
+                dashArray: '3',
+                fillOpacity: 0.7,
+            });
+            //choropleth_geojson.resetStyle(e.target);
+        }
+
+        function zoomToFeature(e) {
+            e.target.remove();
+            //e.target.bindPopup();
+            //e.target.openPopup();
+            //map.fitBounds(e.target.getBounds());
+        }
+
+
+        function onEachFeature(feature, layer) {
+            layer.on({
+                mouseover: highlightFeature,
+                mouseout: resetHighlight,
+                click: zoomToFeature
+            });
+        }
+
+        var info = L.control({
+            position: 'topright'
+        });
+        var legend = L.control({
+            position: 'bottomright'
+        });
+        set_info()
+        set_legend()
+
+        function set_info() {
+            info.remove()
+            info.onAdd = function (map) {
+                this._div = L.DomUtil.create('div', 'info'); // create a div with a class "info"
+                this.update();
+                return this._div;
+            };
+
+            // method that we will use to update the control based on feature properties passed
+            info.update = function (props, prop = prop_default, year = year_default) {
+                this._div.innerHTML = `<h4>World ${prop} ${year}</h4>` + (props ?
+                    '<b>' + props.ADMIN + '</b><br />' + props[`${prop}${year}`] + ` (${unit})` :
+                    'Hover over a country');
+            };
+
+            info.addTo(map);
+        }
+
+        function set_legend() {
+            legend.remove()
+            legend.onAdd = function (map) {
+                var div = L.DomUtil.create('div', 'info legend'),
+                    grades = grades_array,
+                    labels = [];
+                // loop through our density intervals and generate a label with a colored square for each interval
+                div.innerHTML += unit + "</br>"
+                for (var i = 0; i < grades.length; i++) {
+                    div.innerHTML +=
+                        '<i style="background:' + getColor(grades[i] + 1) + '"></i> ' +
+                        grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
+                }
+                return div;
+            };
+            legend.addTo(map);
+        }
+        // slider
+        $j(function () {
+            var handle = $j("#custom-handle");
+            $j('#slider').slider({
+                max: 2024,
+                min: 1980,
+                value: 2019,
+                create: function () {
+                    handle.text($j(this).slider("value"));
+                },
+                slide: function (event, ui) {
+                    //$j(this).val(ui.value);
+                    handle.text(ui.value);
+                    info.update(null, prop = prop_default, year = ui.value);
+                    set_choropleth_geojson(prop = prop_default, year = ui.value);
+                    set_circle_geojson(prop = prop_default, year = ui.value);
+                }
+            });
+        });
+        // End of slider
+    </script>
+    <!-- End of Map -->
+
+    <!--slider-->
+    <div class="slider-wrapper">
+        <div id="slider">
+            <div id="custom-handle" class="ui-slider-handle"></div>
+        </div>
+    </div>
+    <!--End of slider-->
+    
+</div>
+{% endblock %}
